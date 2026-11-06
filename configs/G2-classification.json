@@ -1,0 +1,11 @@
+{
+  "variant": "G2",
+  "task": "classification",
+  "max_length": 8192,
+  "output_dir": "runs/G2-classification",
+  "train_file": "data/classification/train.jsonl",
+  "length_curriculum": false,
+  "transition_fraction": 0.0,
+  "num_labels": 2,
+  "lora_rank": 16
+}

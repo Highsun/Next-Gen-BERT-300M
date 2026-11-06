@@ -1,0 +1,11 @@
+{
+  "variant": "G2",
+  "task": "qa",
+  "max_length": 8192,
+  "output_dir": "runs/G2-qa",
+  "train_file": "data/qa/train.jsonl",
+  "length_curriculum": false,
+  "transition_fraction": 0.0,
+  "num_labels": 2,
+  "lora_rank": 16
+}

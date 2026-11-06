@@ -1,0 +1,11 @@
+{
+  "variant": "G2",
+  "task": "retrieval",
+  "max_length": 8192,
+  "output_dir": "runs/G2-retrieval",
+  "train_file": "data/retrieval/train.jsonl",
+  "length_curriculum": false,
+  "transition_fraction": 0.0,
+  "num_labels": 2,
+  "lora_rank": 16
+}

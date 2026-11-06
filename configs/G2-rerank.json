@@ -1,0 +1,12 @@
+{
+  "variant": "G2",
+  "task": "rerank",
+  "max_length": 8192,
+  "output_dir": "runs/G2-rerank",
+  "train_file": "data/rerank/train.jsonl",
+  "length_curriculum": false,
+  "transition_fraction": 0.0,
+  "num_labels": 2,
+  "lora_rank": 16,
+  "query_global": true
+}

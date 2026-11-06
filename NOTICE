@@ -1,0 +1,7 @@
+Project-authored code is MIT licensed. Model weights and datasets are not bundled.
+The implementation reuses installed Hugging Face Transformers modules under their
+own Apache-2.0 license and mmBERT weights under their published license (MIT at
+research time). Check exact model revisions and dataset terms before use.
+Upstream interface reviewed: transformers v4.57.1 models/modernbert/modeling_modernbert.py.
+No upstream source file has been vendored. Third-party licenses are not replaced
+by this repository's LICENSE.

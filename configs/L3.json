@@ -1,0 +1,13 @@
+{
+  "variant": "L3",
+  "task": "mlm",
+  "max_length": 8192,
+  "model_name": "jhu-clsp/mmBERT-base",
+  "revision": "main",
+  "lora_rank": 16,
+  "max_steps": 1000,
+  "train_file": "data/unsupervised/train.jsonl",
+  "output_dir": "runs/L3",
+  "backend": "tiled",
+  "precision": "bf16"
+}

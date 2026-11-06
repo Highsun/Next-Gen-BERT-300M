@@ -1,0 +1,20 @@
+{
+  "variant": "G2",
+  "task": "ner",
+  "max_length": 8192,
+  "output_dir": "runs/G2-ner",
+  "train_file": "data/ner/train.jsonl",
+  "length_curriculum": false,
+  "transition_fraction": 0.0,
+  "num_labels": 7,
+  "lora_rank": 16,
+  "label_names": [
+    "O",
+    "B-PER",
+    "I-PER",
+    "B-ORG",
+    "I-ORG",
+    "B-LOC",
+    "I-LOC"
+  ]
+}
