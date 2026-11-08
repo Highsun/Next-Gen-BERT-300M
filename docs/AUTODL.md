@@ -89,3 +89,18 @@ nextbert train --config data/wiki-starter/B0-starter.json --resume runs/B0-start
 完成首次验证后应保存：pytest 输出、两份 pilot JSON、smoke train.jsonl/provenance、dev 评估和磁盘使用情况。再决定正式语料规模、种子、任务数据以及统一 FLOPs/GPU 时间预算。训练权重和语料不通过 GitHub 上传。
 
 参考：AutoDL 学术加速 https://www.autodl.com/docs/network_turbo/ ；HF streaming https://huggingface.co/docs/datasets/stream 。
+
+## 7. CUDA 测试通过后的真实近8K短训与耗时定位
+
+若 pilot 成功而新模型更慢，不应直接开始完整消融。以下脚本只用现有缓存和冻结训练集，选择每语言4篇、实际编码长度8000–8192的真实文档，两组使用相同数据，依次训练20步、累积2次，保存完整优化器状态。小集合会重复曝光，只用于显存与开销验证，不作为质量结论。
+
+```bash
+export HF_HOME=/root/autodl-tmp/hf-cache
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action train
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action profile --variant G2
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action profile --variant B0
+```
+
+输出集中在 `data/wiki-long-check/`：`manifest.json`、`training-summary.json`、两份 `*-operators.txt`。训练检查点位于 `runs/*-long-check/`。profile先做两步预热，再收集两步，不替代正式性能测量；默认不保存大型 trace，必要时才显式加 --trace。profile可能受容器CUPTI权限限制，如失败保留报错和训练汇总，不重新训练。
+
+如果训练已完成，不重复 --action train，使用 --action summary 重建汇总即可；若中断，在原配置上使用 nextbert train --resume 恢复完成后再汇总。不要删除旧的 smoke 或 pilot 结果。此阶段不改变模型计算定义，也不重跑已通过的正确性测试。
