@@ -37,6 +37,7 @@ class Config:
     span_batch_probability: float = 0.0
     temperature: float = 0.05
     checkpointing: bool = True
+    profile_pipeline: bool = False
     length_curriculum: bool = True
     max_estimated_flops: float = 0.0
     max_seconds: float = 0.0

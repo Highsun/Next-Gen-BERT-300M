@@ -56,7 +56,8 @@ def prepare(source, output, per_language):
             raise ValueError('Base revision mismatch')
         c.update(max_length=8192, max_steps=20, accumulation=2, length_curriculum=False,
                  save_every=10, log_every=1, keep_checkpoints=2,
-                 train_file=str(output/'train.jsonl'), output_dir=f'runs/{variant}-long-check')
+                 profile_pipeline=True,
+                 train_file=str(output/'train.jsonl'), output_dir=f'runs/{variant}-{output.name}')
         write_json(output/f'{variant}.json', c)
     write_json(output/'manifest.json', recorded)
     return recorded
@@ -77,6 +78,10 @@ def summarize(output):
                             'peak_allocated_GiB': records[-1]['max_memory_bytes']/2**30,
                             'final_loss': records[-1]['loss'],
                             'note': 'Elapsed may include intermediate checkpoint I/O; final save excluded.'}
+        if all('timing' in r for r in records[5:]):
+            summary[variant]['mean_phase_seconds_after_step5'] = {
+                key: statistics.mean(r['timing'][key] for r in records[5:]) for key in records[5]['timing']}
+            summary[variant]['timing_note'] = 'Phase boundaries synchronize CUDA; diagnostic overhead applies.'
     write_json(output/'training-summary.json', summary)
     print(json.dumps(summary, indent=2))
 

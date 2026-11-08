@@ -60,6 +60,10 @@ class Collator:
         if not tokenizer.is_fast:
             raise ValueError("A fast tokenizer with char offsets is required")
         self.tok, self.c = tokenizer, config
+        # Tokenizer is immutable during a run; avoid repeated special-token conversion per replacement.
+        self.vocab_size = len(tokenizer)
+        self.special_ids = frozenset(tokenizer.all_special_ids)
+        self.mask_id = tokenizer.mask_token_id
 
     def plain(self, texts, max_length=None):
         enc = self.tok(texts, padding=True, truncation=True, max_length=max_length or self.c.max_length,
@@ -166,11 +170,11 @@ class Collator:
                     selected.add(j)
                     labels[i, j] = enc['input_ids'][i, j]
                     if operation < 0.8:
-                        enc['input_ids'][i, j] = self.tok.mask_token_id
+                        enc['input_ids'][i, j] = self.mask_id
                     elif operation < 0.9:
-                        replacement = rng.randrange(len(self.tok))
-                        while replacement in self.tok.all_special_ids:
-                            replacement = rng.randrange(len(self.tok))
+                        replacement = rng.randrange(self.vocab_size)
+                        while replacement in self.special_ids:
+                            replacement = rng.randrange(self.vocab_size)
                         enc['input_ids'][i, j] = replacement
         enc['labels'] = labels
         return enc

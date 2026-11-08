@@ -18,7 +18,7 @@
 
 保留原 embeddings、归一化、QKV/O、GeGLU、预测头和 RoPE 模块。模型逐文档处理，隔离文档并去掉 padding 后计算；没有跨文档 packing。摘要由腐蚀后的当前层表示计算，不读取 MLM 原文。摘要位置为块中心，原 token 与字符 offsets 保留。
 
-`tiled` 后端将查询切成 tile，仅读取局部 halo 与去重后的 query keys；不会生成完整局部 N×N mask。完整全局层使用 PyTorch SDPA，摘要使用短 K/V cross-attention。`reference` 是限长 1024 的稠密正确性参考。该 tiled 实现含 Python 循环，**尚非定制融合 kernel，不能预先保证更快**。
+`tiled` 后端在不启用查询全局通道时，将所有局部窗口批量送入 SDPA；启用查询全局通道时保留逐 tile 的局部／query 去重路径。两者都不会生成完整局部 N×N mask。完整全局层使用 PyTorch SDPA，摘要使用短 K/V cross-attention。`reference` 是限长 1024 的稠密正确性参考。该实现**尚非定制融合 kernel，批量窗口也有复制与额外显存开销，不能预先保证更快**。
 
 ## 安装：只在租用的 CUDA 服务器执行
 

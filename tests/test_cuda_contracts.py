@@ -1,10 +1,11 @@
 """Required AutoDL gates; deliberately NOT executed during local authoring."""
 import pytest
 import torch
+import copy
 from transformers import ModernBertConfig, ModernBertForMaskedLM
 from nextbert.config import Config
 from nextbert.model import Encoder
-from nextbert.attention import local_attention
+from nextbert.attention import local_attention, SummaryBranch
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA validation only')
 
@@ -37,10 +38,11 @@ def test_b0_matches_hf_valid_tokens():
 
 
 @pytest.mark.parametrize('query_global', [False, True])
-def test_tiled_equals_dense_outputs_and_gradients(query_global):
-    tensors = [torch.randn(1, 4, 37, 8, device='cuda', requires_grad=True) for _ in range(3)]
+@pytest.mark.parametrize('length', [1, 7, 16, 37, 129])
+def test_tiled_equals_dense_outputs_and_gradients(query_global, length):
+    tensors = [torch.randn(1, 4, length, 8, device='cuda', requires_grad=True) for _ in range(3)]
     copies = [x.detach().clone().requires_grad_() for x in tensors]
-    mask = torch.zeros(37, device='cuda', dtype=torch.bool)
+    mask = torch.zeros(length, device='cuda', dtype=torch.bool)
     if query_global:
         mask[:5] = True
     actual = local_attention(*tensors, 4, 8, mask)
@@ -50,6 +52,35 @@ def test_tiled_equals_dense_outputs_and_gradients(query_global):
     expected.square().sum().backward()
     for a, b in zip(tensors, copies):
         torch.testing.assert_close(a.grad, b.grad, rtol=1e-3, atol=1e-4)
+
+
+@pytest.mark.parametrize('variant', ['M1', 'G2'])
+def test_vectorized_summaries_match_blockwise_values_and_gradients(variant):
+    branch = SummaryBranch(32, 4, variant).cuda()
+    reference = copy.deepcopy(branch)
+    x = torch.randn(1, 23, 32, device='cuda', requires_grad=True)
+    y = x.detach().clone().requires_grad_()
+    mask = torch.ones(23, device='cuda', dtype=torch.bool)
+    mask[[0, 5, 11, 22]] = False
+    actual, positions = branch.summaries(x, mask, 8)
+    vectors, centers = [], []
+    for block in mask.nonzero(as_tuple=True)[0].split(8):
+        values = y[0, block]
+        vectors.append(values.mean(0))
+        centers.append((block[0]+block[-1]).float()/2)
+        if hasattr(reference, 'pool_query'):
+            weights = torch.softmax((values.float() @ reference.pool_query.float())/(32**.5), 0)
+            vectors.append((weights[:, None]*values).sum(0))
+            centers.append(centers[-1])
+    expected = torch.stack(vectors)[None]
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(positions, torch.stack(centers))
+    gradient = torch.randn_like(actual)
+    (actual*gradient).sum().backward()
+    (expected*gradient).sum().backward()
+    torch.testing.assert_close(x.grad, y.grad, rtol=1e-5, atol=1e-6)
+    if hasattr(branch, 'pool_query'):
+        torch.testing.assert_close(branch.pool_query.grad, reference.pool_query.grad, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize('variant', ['L3', 'M1', 'M2', 'G2', 'C2'])

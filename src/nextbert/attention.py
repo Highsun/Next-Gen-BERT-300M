@@ -15,6 +15,34 @@ def sdpa(q, k, v, mask=None):
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0)
 
 
+def batched_local_attention(q, k, v, radius, tile_size):
+    """Batch overlapping K/V windows in one SDPA call; preserve sliding edges."""
+    _, heads, n, dim = q.shape
+    tiles = math.ceil(n/tile_size)
+    padding = tiles*tile_size-n
+    width = tile_size+2*radius
+    queries = F.pad(q, (0, 0, 0, padding)).reshape(1, heads, tiles, tile_size, dim)
+    queries = queries.permute(0, 2, 1, 3, 4).reshape(tiles, heads, tile_size, dim)
+
+    def windows(tensor):
+        padded = F.pad(tensor, (0, 0, radius, radius+padding))
+        return padded.unfold(2, width, tile_size).permute(0, 2, 1, 4, 3).reshape(tiles, heads, width, dim)
+
+    rows = torch.arange(tile_size, device=q.device)
+    columns = torch.arange(width, device=q.device)-radius
+    starts = torch.arange(tiles, device=q.device)*tile_size
+    keys = starts[:, None]+columns[None, :]
+    visible = ((rows[:, None]-columns[None, :]).abs() <= radius)[None]
+    visible = visible & (keys[:, None, :] >= 0) & (keys[:, None, :] < n)
+    if padding:
+        # Padded query rows are discarded; give them valid keys to avoid all-masked-row kernel quirks.
+        real_queries = starts[:, None]+rows[None, :] < n
+        visible = visible | (~real_queries[..., None] & (keys[:, None, :] >= 0) & (keys[:, None, :] < n))
+    out = sdpa(queries, windows(k), windows(v), visible[:, None])
+    out = out.reshape(1, tiles, heads, tile_size, dim).permute(0, 2, 1, 3, 4)
+    return out.reshape(1, heads, tiles*tile_size, dim)[:, :, :n]
+
+
 def local_attention(q, k, v, radius, tile_size, query_mask=None, reference=False):
     """Single unpadded document. Boolean SDPA mask: True means visible.
 
@@ -30,6 +58,8 @@ def local_attention(q, k, v, radius, tile_size, query_mask=None, reference=False
         visible = (idx[:, None] - idx[None, :]).abs() <= radius
         visible = visible | is_query[:, None] | is_query[None, :]
         return sdpa(q, k, v, visible[None, None])
+    if query_mask is None or not bool(query_mask.any()):
+        return batched_local_attention(q, k, v, radius, tile_size)
     query_idx = idx[is_query]
     chunks = []
     for start in range(0, n, tile_size):
@@ -66,16 +96,21 @@ class SummaryBranch(nn.Module):
         indices = content_mask.nonzero(as_tuple=True)[0]
         if not indices.numel():
             raise ValueError("Document has no poolable content tokens")
-        vectors, positions = [], []
-        for block in indices.split(block_size):
-            values = x[0, block]
-            vectors.append(values.mean(dim=0))
-            positions.append((block[0] + block[-1]).float() / 2)
-            if hasattr(self, "pool_query"):
-                weights = torch.softmax((values.float() @ self.pool_query.float()) / math.sqrt(x.shape[-1]), 0)
-                vectors.append((weights[:, None].to(values.dtype) * values).sum(0))
-                positions.append(positions[-1])
-        return torch.stack(vectors)[None], torch.stack(positions)
+        count = indices.numel()
+        blocks = math.ceil(count/block_size)
+        padding = blocks*block_size-count
+        values = F.pad(x[0, indices], (0, 0, 0, padding)).reshape(blocks, block_size, x.shape[-1])
+        valid = torch.arange(blocks*block_size, device=x.device).reshape(blocks, block_size) < count
+        means = (values.float().sum(1)/valid.sum(1, keepdim=True)).to(x.dtype)
+        first = torch.arange(blocks, device=x.device)*block_size
+        last = (first+block_size-1).clamp_max(count-1)
+        positions = (indices[first]+indices[last]).float()/2
+        if not hasattr(self, 'pool_query'):
+            return means[None], positions
+        scores = (values.float() @ self.pool_query.float())/math.sqrt(x.shape[-1])
+        weights = torch.softmax(scores.masked_fill(~valid, float('-inf')), dim=1)
+        weighted = (weights[..., None].to(x.dtype)*values).sum(1)
+        return torch.stack((means, weighted), dim=1).reshape(1, -1, x.shape[-1]), positions.repeat_interleave(2)
 
     def mix(self, x, local, summary):
         if self.variant == "G2":

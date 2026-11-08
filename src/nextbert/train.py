@@ -141,7 +141,7 @@ def train(config_path, resume=None, init=None):
     if resume:
         payload = torch.load(Path(resume)/'checkpoint.pt', map_location='cpu', weights_only=False)
         # Resume means exact config, including data and max_steps; use init for a new stage.
-        if payload['config'] != c.to_dict() or payload['state']['data_sha256'] != digest:
+        if Config(**payload['config']).to_dict() != c.to_dict() or payload['state']['data_sha256'] != digest:
             raise ValueError("Resume config or training data changed")
         restore_state(model, payload)
         optimizer.load_state_dict(payload['optimizer'])
@@ -153,6 +153,7 @@ def train(config_path, resume=None, init=None):
     out = Path(c.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     provenance = {'config': c.to_dict(), 'data_sha256': digest,
+                  'implementation': 'batched-local-v1',
                   'resolved_model_revision': getattr(model.lm.config, '_commit_hash', None),
                   'torch': torch.__version__, 'cuda': torch.version.cuda,
                   'gpu': torch.cuda.get_device_name(),
@@ -178,6 +179,8 @@ def train(config_path, resume=None, init=None):
             for group in optimizer.param_groups:
                 group['lr'] = c.learning_rate*multiplier
             loss_value = 0.
+            timing = {'collate_seconds': 0., 'transfer_seconds': 0., 'model_seconds': 0.,
+                      'optimizer_seconds': 0.}
             for micro in range(c.accumulation):
                 if state['cursor'] >= len(examples):
                     state['epoch'] += 1
@@ -197,7 +200,15 @@ def train(config_path, resume=None, init=None):
                         bucket = min(targets, key=lambda k: state['length_tokens'][k]/targets[k])
                         length = int(bucket)
                     length = min(length, c.max_length)
-                batch = to_device(collate([example], state['step']*c.accumulation+micro, length), 'cuda')
+                phase = time.perf_counter()
+                cpu_batch = collate([example], state['step']*c.accumulation+micro, length)
+                timing['collate_seconds'] += time.perf_counter()-phase
+                phase = time.perf_counter()
+                batch = to_device(cpu_batch, 'cuda')
+                if c.profile_pipeline:
+                    torch.cuda.synchronize()
+                timing['transfer_seconds'] += time.perf_counter()-phase
+                phase = time.perf_counter()
                 if c.task == 'qa' and int(batch['start'][0]) == -100:
                     raise ValueError(f"Positive QA answer truncated: {example['id']}; prepare answer-covering windows")
                 with autocast(c):
@@ -206,19 +217,26 @@ def train(config_path, resume=None, init=None):
                     raise FloatingPointError("Non-finite loss; checkpoint not advanced")
                 (loss/c.accumulation).backward()
                 loss_value += float(loss.detach())/c.accumulation
+                if c.profile_pipeline:
+                    torch.cuda.synchronize()
+                timing['model_seconds'] += time.perf_counter()-phase
                 parts = [batch['queries'], batch['documents']] if c.task == 'retrieval' else [batch]
                 used_tokens = sum(int(x['attention_mask'].sum()) for x in parts)
                 state['tokens'] += used_tokens
                 if c.task == 'mlm' and progress >= .2:
                     state['length_tokens'][str(length)] = state['length_tokens'].get(str(length), 0)+used_tokens
                 state['estimated_flops'] += forward_flops*(4 if c.checkpointing else 3)
+            phase = time.perf_counter()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
             optimizer.step()
             state['step'] += 1
             torch.cuda.synchronize()
+            timing['optimizer_seconds'] = time.perf_counter()-phase
             state['elapsed_seconds'] = previous_elapsed+time.monotonic()-clock
             record = {**state, 'loss': loss_value, 'transition': model.transition,
                       'lr': optimizer.param_groups[0]['lr'], 'max_memory_bytes': torch.cuda.max_memory_allocated()}
+            if c.profile_pipeline:
+                record['timing'] = timing
             with (out/'train.jsonl').open('a') as handle:
                 handle.write(json.dumps(record)+'\n')
             if state['step'] % c.log_every == 0:

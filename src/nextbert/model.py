@@ -124,8 +124,12 @@ class Encoder(nn.Module):
             else:
                 r = e.radius if changed else c.local_attention//2
                 # Tiles compute a halo superset; count the executed superset, not just logical edges.
-                pairs += sum(min(e.tile_size, n-start)*min(n, e.tile_size+2*r+nq)
-                             for start in range(0, n, e.tile_size))
+                if not e.query_global and e.backend != 'reference':
+                    pairs += math.ceil(n/e.tile_size)*e.tile_size*(e.tile_size+2*r)
+                else:
+                    effective_query = nq if e.query_global else 0
+                    pairs += sum(min(e.tile_size, n-start)*min(n, e.tile_size+2*r+effective_query)
+                                 for start in range(0, n, e.tile_size))
                 if e.query_global:
                     pairs += nq*n
                 if str(i) in self.branches:

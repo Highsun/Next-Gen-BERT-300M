@@ -104,3 +104,22 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action pr
 输出集中在 `data/wiki-long-check/`：`manifest.json`、`training-summary.json`、两份 `*-operators.txt`。训练检查点位于 `runs/*-long-check/`。profile先做两步预热，再收集两步，不替代正式性能测量；默认不保存大型 trace，必要时才显式加 --trace。profile可能受容器CUPTI权限限制，如失败保留报错和训练汇总，不重新训练。
 
 如果训练已完成，不重复 --action train，使用 --action summary 重建汇总即可；若中断，在原配置上使用 nextbert train --resume 恢复完成后再汇总。不要删除旧的 smoke 或 pilot 结果。此阶段不改变模型计算定义，也不重跑已通过的正确性测试。
+
+## 8. 第一轮profile后的实现优化复测
+
+初始真实长文20步：B0约445.6秒，G2约470.6秒。算子报告中，两次被profile的更新分别出现约11.5万/16.9万次kernel启动，以及3584/4864次unique操作。这是初始实现的负面效率证据，不是新结构加速的证明。
+
+实现优化版本将无query-global的局部窗口批量送入一次SDPA，避免逐tile unique与高级索引；摘要池化按block向量化；固定tokenizer词表大小与特殊token集合在collator初始化时缓存。参数名及模型边定义保持不变，但算子归并可能带来浮点舍入差异，必须重新验证输出和梯度。当前query-global路径仍使用旧的逐tile参考实现，不宣称其性能已经优化。
+
+先运行CUDA测试，新增短序列、非整tile长度与摘要梯度对照；全部通过后使用新目录，保留旧实验：
+
+```bash
+pytest -q tests/test_cuda_contracts.py --tb=short -x
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action train --output data/wiki-long-check-v2
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action profile --variant B0 --output data/wiki-long-check-v2
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action profile --variant G2 --output data/wiki-long-check-v2
+```
+
+新配置打开profile_pipeline，按阶段同步并记录collate、transfer、model前反向、梯度裁剪及optimizer耗时。同步本身会引入开销，此轮用于解释瓶颈；正式速度对比需两组采用一致计时设置，并另测关闭阶段同步的吞吐。新汇总的mean_phase_seconds_after_step5可以检查完整训练与预制batch profiler之间的差距是否来自数据处理，不预设原因已经证实。
+
+本地仅做静态检查；本轮CUDA测试和性能改善需由服务器验证。勿把profiler表中父级范围的百分比相加，或将超过100%的嵌套范围统计解释为物理GPU利用率。
