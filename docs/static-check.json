@@ -1,5 +1,5 @@
 {
-  "checked_at_utc": "2026-11-08T11:15:38.867103+00:00",
+  "checked_at_utc": "2026-11-08T12:31:58.558061+00:00",
   "python_files": [
     "src/nextbert/__init__.py",
     "src/nextbert/attention.py",

@@ -1,5 +1,4 @@
 """Required AutoDL gates; deliberately NOT executed during local authoring."""
-import copy
 import pytest
 import torch
 from transformers import ModernBertConfig, ModernBertForMaskedLM
@@ -11,7 +10,11 @@ pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA vali
 
 
 def tiny(variant='B0', backend='tiled'):
+    # A tiny vocabulary must not inherit ModernBERT's 50k-range token IDs.
+    # This fixture is independent of the real mmBERT tokenizer/checkpoint.
     hc = ModernBertConfig(vocab_size=128, hidden_size=32, num_hidden_layers=7, num_attention_heads=4,
+                         pad_token_id=0, bos_token_id=1, eos_token_id=2,
+                         cls_token_id=1, sep_token_id=2, mask_token_id=4,
                          intermediate_size=48, max_position_embeddings=512, local_attention=8,
                          global_attn_every_n_layers=3, reference_compile=False,
                          attention_dropout=0., embedding_dropout=0., mlp_dropout=0.)
