@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import shutil
 import time
 import numpy as np
 import torch
@@ -43,7 +44,13 @@ def build(config):
 def save_checkpoint(path, model, tokenizer, config, optimizer, state):
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
-    payload = {'model': model.state_dict(), 'optimizer': optimizer.state_dict(), 'state': state,
+    names = {name for name, param in model.named_parameters() if param.requires_grad}
+    weights = model.state_dict()
+    compact = bool(config.lora_rank)
+    if compact:
+        weights = {name: value for name, value in weights.items() if name in names}
+    payload = {'model': weights, 'checkpoint_format': 'trainable-v1' if compact else 'full-v1',
+               'optimizer': optimizer.state_dict(), 'state': state,
                'python_rng': random.getstate(), 'numpy_rng': np.random.get_state(),
                'torch_rng': torch.get_rng_state(), 'cuda_rng': torch.cuda.get_rng_state_all(),
                'config': config.to_dict()}
@@ -54,12 +61,40 @@ def save_checkpoint(path, model, tokenizer, config, optimizer, state):
     tokenizer.save_pretrained(path/'tokenizer')
 
 
+def restore_state(model, payload, backbone_only=False):
+    """Compact checkpoints require the same immutable base revision and LoRA rank."""
+    compact = payload.get('checkpoint_format') == 'trainable-v1'
+    if compact and not model.exp.lora_rank:
+        raise ValueError('Cannot load LoRA-only checkpoint into full-parameter model')
+    target = model.state_dict()
+    trainable = {name for name, p in model.named_parameters() if p.requires_grad}
+    expected = trainable if compact else set(target)
+    source = payload['model']
+    if backbone_only:
+        source = {k: v for k, v in source.items() if k.startswith(('lm.', 'branches.'))}
+        expected = {k for k in expected if k.startswith(('lm.', 'branches.'))}
+    if set(source) != expected or any(k not in target or target[k].shape != v.shape for k, v in source.items()):
+        raise ValueError('Checkpoint architecture, task heads, or trainable parameter set mismatch')
+    if compact and (payload['config']['model_name'] != model.exp.model_name
+                    or payload['config']['revision'] != model.exp.revision):
+        raise ValueError('Compact checkpoint base model/revision mismatch')
+    model.load_state_dict(source, strict=not compact and not backbone_only)
+
+
+def prune_checkpoints(output, keep):
+    """Called only after a new checkpoint has been completely written."""
+    checkpoints = sorted(p for p in Path(output).glob('step-*')
+                         if p.is_dir() and p.name[5:].isdigit() and (p/'checkpoint.pt').is_file())
+    for old in checkpoints[:-keep]:
+        shutil.rmtree(old)
+
+
 def load_weights(directory):
     # Only load trusted, self-produced checkpoints (optimizer/RNG require pickle).
     payload = torch.load(Path(directory)/'checkpoint.pt', map_location='cpu', weights_only=False)
     config = Config(**payload['config']).validate()
     model, tok = build(config)
-    model.load_state_dict(payload['model'], strict=True)
+    restore_state(model, payload)
     model.transition = 1.0
     return model, tok, config, payload
 
@@ -79,21 +114,22 @@ def train(config_path, resume=None, init=None):
     c = Config.load(config_path)
     if resume and init:
         raise ValueError("Choose resume OR init")
+    if not Path(c.train_file).is_file():
+        raise FileNotFoundError(f'Training data not found: {c.train_file}; prepare data first')
+    if not resume and (Path(c.output_dir)/'provenance.json').exists():
+        raise FileExistsError('Output already contains a run; use --resume or a new output_dir')
     if resume:
         saved_config = Config.load(Path(resume)/'config.json')
         if c.revision == 'main':
             c.revision = saved_config.revision
-    model, tok = build(c)
     if init:
         payload = torch.load(Path(init)/'checkpoint.pt', map_location='cpu', weights_only=False)
-        # Same architecture/rank required; task heads retain deterministic initialization.
-        source = payload['model']
-        target = model.state_dict()
-        backbone = {k: v for k, v in source.items() if k.startswith(('lm.', 'branches.'))}
-        missing = [k for k in target if k.startswith(('lm.', 'branches.')) and k not in backbone]
-        if missing or any(k not in target or target[k].shape != v.shape for k, v in backbone.items()):
-            raise ValueError("Init backbone architecture/rank mismatch")
-        model.load_state_dict(backbone, strict=False)
+        if c.revision == 'main':
+            c.revision = payload['config']['revision']
+    model, tok = build(c)
+    if init:
+        restore_state(model, payload, backbone_only=True)
+        del payload
     examples = list(rows(c.train_file))
     if not examples:
         raise ValueError("Empty training file")
@@ -107,7 +143,7 @@ def train(config_path, resume=None, init=None):
         # Resume means exact config, including data and max_steps; use init for a new stage.
         if payload['config'] != c.to_dict() or payload['state']['data_sha256'] != digest:
             raise ValueError("Resume config or training data changed")
-        model.load_state_dict(payload['model'], strict=True)
+        restore_state(model, payload)
         optimizer.load_state_dict(payload['optimizer'])
         state = payload['state']
         random.setstate(payload['python_rng'])
@@ -189,6 +225,7 @@ def train(config_path, resume=None, init=None):
                 print(json.dumps(record), flush=True)
             if state['step'] % c.save_every == 0:
                 save_checkpoint(out/f"step-{state['step']:06d}", model, tok, c, optimizer, state)
+                prune_checkpoints(out, c.keep_checkpoints)
             if ((c.max_estimated_flops and state['estimated_flops'] >= c.max_estimated_flops)
                     or (c.max_seconds and state['elapsed_seconds'] >= c.max_seconds)):
                 break

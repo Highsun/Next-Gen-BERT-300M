@@ -95,7 +95,7 @@ nextbert train --config configs/G2-qa.json --init runs/G2/final
 nextbert train --config configs/G2.json --resume runs/G2/step-000100
 ```
 
-`--resume` 要求配置、数据 SHA 完全相同，恢复模型、AdamW、样本 cursor、RNG、累计 tokens 和估算 FLOPs。改变任务或预算使用 `--init`，不要伪装 exact resume。只加载可信的自行生成 checkpoint；完整恢复文件包含 Python pickle 状态，不加载来源不明的 `.pt`。
+`--resume` 要求配置、数据 SHA 完全相同，恢复模型、AdamW、样本 cursor、RNG、累计 tokens 和估算 FLOPs。LoRA 模式使用 trainable-v1 格式，仅保存 LoRA、新增模块和任务头及优化器／RNG；恢复时从不可变 SHA 加载共享底座。全参模式仍保存完整权重。默认 keep_checkpoints=2，成功写入新检查点后仅保留本运行最近两个 step 目录，另保留 final；不要把唯一检查点放在这些自动轮换目录中。改变任务或预算使用 `--init`，不要伪装 exact resume。只加载可信的自行生成 checkpoint；完整恢复文件包含 Python pickle 状态，不加载来源不明的 `.pt`。
 
 默认：LoRA rank 16，QKV/O 与 FFN 线性层，microbatch=1、累积 8、BF16、gradient checkpointing。新增摘要与 heads 训练，底座冻结。rank=0 为全参。query-global 仅在 qa/rerank 允许；检索建库绝不读取 query。MLM 只对选中位置执行词表预测头，避免 8K×256K 的全量 logits。
 
@@ -148,7 +148,9 @@ python3 scripts/static_check.py  # Python 3.11+；仅解析/编译，不导入�
 bash -n scripts/setup_ubuntu.sh scripts/run_matrix.sh
 ```
 
-报告保存在 `docs/static-check.json`。静态通过不代表依赖接口、数值、梯度或 GPU 通过。GitHub Actions 同样只执行静态检查，不会下载权重或开始训练。
+报告保存在 `docs/static-check.json`。静态通过不代表依赖接口、数值、梯度或 GPU 通过。本仓库不使用 GitHub Actions，也不包含 workflow；检查由用户在授权的环境中手动运行。
+
+AutoDL 的分步启动流程见 [docs/AUTODL.md](docs/AUTODL.md)。
 
 所有环境局限于 `.venv`；删除 `.venv` 可移除项目依赖。系统层不安装 CUDA/驱动。模型缓存遵循 Hugging Face 缓存目录，可在 AutoDL 显式设置 HF_HOME 指向数据盘。数据、权重、实验输出、密钥和环境文件均被 gitignore 排除。
 

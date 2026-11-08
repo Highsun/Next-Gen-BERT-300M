@@ -9,6 +9,7 @@ requires-python = ">=3.10,<3.13"
 dependencies = ["torch>=2.6,<2.9", "transformers==4.57.1", "numpy>=1.26,<3", "safetensors>=0.4.5", "huggingface-hub>=0.34,<1", "PyYAML>=6,<7", "seqeval==1.2.2"]
 [project.optional-dependencies]
 dev = ["pytest>=8,<9", "ruff>=0.11,<1"]
+data = ["datasets>=3.6,<5"]
 [project.scripts]
 nextbert = "nextbert.cli:main"
 [tool.setuptools.packages.find]

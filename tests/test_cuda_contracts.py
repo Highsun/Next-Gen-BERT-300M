@@ -74,3 +74,30 @@ def test_documents_are_isolated_and_padding_invariant():
         alone = model.encode(a, torch.ones_like(a), torch.ones_like(a, dtype=torch.bool))
         together = model.encode(batch, valid, valid)
     torch.testing.assert_close(alone[0], together[0, :19], rtol=1e-4, atol=1e-5)
+
+
+def test_compact_checkpoint_restores_trainables_without_replacing_base(tmp_path):
+    from nextbert.train import save_checkpoint, restore_state
+    model = tiny('G2')
+    model.lm.requires_grad_(False)
+    model.exp.lora_rank = 16  # Exercise storage format independently of LoRA injection.
+    model.exp.revision = 'a'*40
+    expected = {n: p.detach().clone() for n, p in model.named_parameters() if p.requires_grad}
+    frozen = model.lm.model.embeddings.tok_embeddings.weight.detach().clone()
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad])
+    class TokenizerStub:
+        def save_pretrained(self, path):
+            path.mkdir(parents=True, exist_ok=True)
+    save_checkpoint(tmp_path/'compact', model, TokenizerStub(), model.exp, optimizer, {'step': 1})
+    payload = torch.load(tmp_path/'compact'/'checkpoint.pt', weights_only=False)
+    assert payload['checkpoint_format'] == 'trainable-v1'
+    assert not any(n.startswith('lm.') for n in payload['model'])
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            if n in expected:
+                p.add_(1)
+    restore_state(model, payload)
+    for n, p in model.named_parameters():
+        if n in expected:
+            torch.testing.assert_close(p, expected[n])
+    torch.testing.assert_close(model.lm.model.embeddings.tok_embeddings.weight, frozen)

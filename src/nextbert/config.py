@@ -41,6 +41,7 @@ class Config:
     max_estimated_flops: float = 0.0
     max_seconds: float = 0.0
     save_every: int = 100
+    keep_checkpoints: int = 2
     log_every: int = 10
     train_file: str = "data/train.jsonl"
     output_dir: str = "runs/B0"
@@ -55,7 +56,7 @@ class Config:
         if self.precision not in {"bf16", "fp32"}:
             raise ValueError("Supported precision: bf16, fp32")
         for key in ("block_size", "tile_size", "projection_dim", "query_length", "max_length", "num_labels",
-                    "accumulation", "max_steps", "save_every", "log_every"):
+                    "accumulation", "max_steps", "save_every", "keep_checkpoints", "log_every"):
             if getattr(self, key) <= 0:
                 raise ValueError(f"{key} must be positive")
         if self.max_length > 8192 or self.query_length + 4 >= self.max_length:
