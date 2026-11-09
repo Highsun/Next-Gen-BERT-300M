@@ -152,6 +152,10 @@ bash -n scripts/setup_ubuntu.sh scripts/run_matrix.sh
 
 AutoDL 的分步启动流程见 [docs/AUTODL.md](docs/AUTODL.md)。
 
+完成 stage1 的 B0/L3/G2 后，使用 [已有权重诊断流程](docs/STAGE1_DIAGNOSTICS.md)：
+`scripts/diagnose_stage1.py` 冻结小规模输入，顺序评估原始底座 P0 和三组 final，
+检查实际长度、固定目标的远端上下文敏感性与摘要门控。该流程不追加训练，也不将 MLM 或上下文敏感性作为下游能力证明。
+
 所有环境局限于 `.venv`；删除 `.venv` 可移除项目依赖。系统层不安装 CUDA/驱动。模型缓存遵循 Hugging Face 缓存目录，可在 AutoDL 显式设置 HF_HOME 指向数据盘。数据、权重、实验输出、密钥和环境文件均被 gitignore 排除。
 
 研究设计与论文依据见 `docs/`。自有代码 MIT；权重、数据和依赖遵循各自许可证，见 NOTICE。

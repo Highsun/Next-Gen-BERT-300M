@@ -157,3 +157,11 @@ python scripts/stage1.py --action summary
 ```
 
 输出outputs/stage1-s17/summary.json，包含逐语言MLM loss与训练日志末条统计。MLM只用于结构适配诊断，不能用它决定最终模型胜负；之后必须进行同预算分类、抽取、检索/重排及长程证据应用验证，再对有潜力的变化做三seed确认。尤其不能因为单seed MLM loss更低就保留G2，或仅因更高就宣称所有用途均失败。
+
+## 10. 已完成 stage1：不追加训练的权重诊断
+
+若已导出三组结果并发现 G2 未优于 B0，先保留现有 final。下一步执行
+[STAGE1_DIAGNOSTICS.md](STAGE1_DIAGNOSTICS.md) 中的冻结输入和顺序推理流程。
+它只使用已有验证集、模型缓存与三组权重；不需要下载新数据或重新跑 stage1。
+结果包括原始底座 P0 参考、不同实际长度的 MLM、固定目标的远端上下文干预以及 G2 门控激活。
+代码只做了本地静态检查，首次 GPU 执行与结果判断由服务器完成。
