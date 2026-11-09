@@ -152,6 +152,8 @@ bash -n scripts/setup_ubuntu.sh scripts/run_matrix.sh
 
 AutoDL 的分步启动流程见 [docs/AUTODL.md](docs/AUTODL.md)。
 
+结束实验并准备释放实例时，先按 [最终归档流程](docs/FINAL_ARCHIVE.md) 保存原始数据、增量权重与固定底座缓存，下载并核验本地副本。该流程不新增训练或推理。
+
 完成 stage1 的 B0/L3/G2 后，使用 [已有权重诊断流程](docs/STAGE1_DIAGNOSTICS.md)：
 `scripts/diagnose_stage1.py` 冻结小规模输入，顺序评估原始底座 P0 和三组 final，
 检查实际长度、固定目标的远端上下文敏感性与摘要门控。该流程不追加训练，也不将 MLM 或上下文敏感性作为下游能力证明。

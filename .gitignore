@@ -28,3 +28,8 @@ wandb/
 *.onnx
 requirements-resolved.txt
 raw/
+final-backup*/
+nextbert-final-backup*/
+*.tar.gz
+*.tar.gz.tmp
+SHA256SUMS.txt

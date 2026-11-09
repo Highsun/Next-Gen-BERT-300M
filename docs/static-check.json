@@ -1,5 +1,5 @@
 {
-  "checked_at_utc": "2026-11-09T03:29:44.037410+00:00",
+  "checked_at_utc": "2026-11-09T07:37:57.672253+00:00",
   "python_files": [
     "src/nextbert/__init__.py",
     "src/nextbert/attention.py",
@@ -12,6 +12,7 @@
     "src/nextbert/train.py",
     "scripts/compare_results.py",
     "scripts/diagnose_stage1.py",
+    "scripts/final_archive.py",
     "scripts/long_check.py",
     "scripts/make_diagnostics.py",
     "scripts/prepare_wikipedia.py",
