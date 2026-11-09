@@ -41,9 +41,6 @@ class Encoder(nn.Module):
         if config.variant != "B0" and any(i >= c.num_hidden_layers for i in config.kept_global):
             raise ValueError("kept_global contains out-of-range layer indices")
         self.branches = nn.ModuleDict()
-        if config.variant in {"M1", "M2", "G2", "C2"}:
-            for i in self.changed:
-                self.branches[str(i)] = SummaryBranch(self.width, self.heads, config.variant)
         self.projection = nn.Linear(self.width, config.projection_dim, bias=False)
         self.classifier = nn.Linear(self.width, config.num_labels)
         self.qa_head = nn.Linear(self.width, 2)
@@ -55,6 +52,11 @@ class Encoder(nn.Module):
                 for module, name in ((layer.attn, "Wqkv"), (layer.attn, "Wo"),
                                      (layer.mlp, "Wi"), (layer.mlp, "Wo")):
                     setattr(module, name, LoRALinear(getattr(module, name), config.lora_rank))
+        # Initialize common heads/adapters before variant-only parameters so paired
+        # seeds produce identical common initial weights across architecture arms.
+        if config.variant in {"M1", "M2", "G2", "C2"}:
+            for i in self.changed:
+                self.branches[str(i)] = SummaryBranch(self.width, self.heads, config.variant)
         self.last_forward_flops = 0.0
 
     def layer(self, hidden, layer, index, content, query):

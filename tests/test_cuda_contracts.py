@@ -10,7 +10,7 @@ from nextbert.attention import local_attention, SummaryBranch
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA validation only')
 
 
-def tiny(variant='B0', backend='tiled'):
+def tiny(variant='B0', backend='tiled', lora_rank=0):
     # A tiny vocabulary must not inherit ModernBERT's 50k-range token IDs.
     # This fixture is independent of the real mmBERT tokenizer/checkpoint.
     hc = ModernBertConfig(vocab_size=128, hidden_size=32, num_hidden_layers=7, num_attention_heads=4,
@@ -22,8 +22,18 @@ def tiny(variant='B0', backend='tiled'):
     hc._attn_implementation = 'sdpa'
     upstream = ModernBertForMaskedLM(hc).cuda().eval()
     cfg = Config(variant=variant, kept_global=[0, 6], radius=4, block_size=8,
-                 tile_size=8, lora_rank=0, checkpointing=False, backend=backend)
+                 tile_size=8, lora_rank=lora_rank, checkpointing=False, backend=backend)
     return Encoder(cfg, pretrained=upstream).cuda().eval()
+
+
+def test_paired_seed_initializes_common_weights_identically():
+    torch.manual_seed(17)
+    baseline = tiny('B0', lora_rank=2)
+    torch.manual_seed(17)
+    candidate = tiny('G2', lora_rank=2)
+    target = dict(candidate.named_parameters())
+    for name, parameter in baseline.named_parameters():
+        torch.testing.assert_close(parameter, target[name], rtol=0, atol=0)
 
 
 def test_b0_matches_hf_valid_tokens():

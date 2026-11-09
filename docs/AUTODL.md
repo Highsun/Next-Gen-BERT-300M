@@ -123,3 +123,37 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/long_check.py --action pr
 新配置打开profile_pipeline，按阶段同步并记录collate、transfer、model前反向、梯度裁剪及optimizer耗时。同步本身会引入开销，此轮用于解释瓶颈；正式速度对比需两组采用一致计时设置，并另测关闭阶段同步的吞吐。新汇总的mean_phase_seconds_after_step5可以检查完整训练与预制batch profiler之间的差距是否来自数据处理，不预设原因已经证实。
 
 本地仅做静态检查；本轮CUDA测试和性能改善需由服务器验证。勿把profiler表中父级范围的百分比相加，或将超过100%的嵌套范围统计解释为物理GPU利用率。
+
+## 9. 实现开销解决后的第一轮质量筛选
+
+服务器第二轮真实长文汇总：B0/G2均完成20步与327680 tokens，记录训练时间约10.73/10.75秒；旧实现约445.6/470.6秒。两组共同提速，不能算作G2相对B0的架构优势。两组显存仍约5.66GiB，G2的MLM loss仍更高。该8篇重复语料的短跑只用于验证工程可行性。
+
+下一步停止反复profile，用B0/L3/G2单seed筛选：每语言10M tokens候选池、按文档hash 90/10切分，要求每语言开发文档至少100篇；保留相同模型/数据SHA，每组从共同预训练底座新建LoRA，不继续8篇短跑的权重。新增参数改在共同head/LoRA之后初始化，避免候选分支消耗随机数导致共同参数的初始化不同；CUDA测试加入相同seed下共同参数一致检查。旧检查点的参数名和加载方式不变。
+
+从Mac上传stage1更新包并在仓库根目录解压后，执行：
+
+```bash
+pytest -q tests/test_cuda_contracts.py --tb=short -x
+export HF_HOME=/root/autodl-tmp/hf-cache
+source /etc/network_turbo
+python scripts/stage1.py --action download
+python scripts/stage1.py --action prepare
+mkdir -p logs
+HF_HOME=/root/autodl-tmp/hf-cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 nohup python -u scripts/stage1.py --action train > logs/stage1-s17.log 2>&1 < /dev/null &
+tail -f logs/stage1-s17.log
+```
+
+数据下载需要联网，不能给download设置离线标志。默认reference读取旧的data/wiki-starter/manifest.json，复用原模型与Wikipedia revision；新语料路径data/wiki-phase1，不能覆盖原冻结数据。prepare只生成配置与中英文开发集文件，不会启动训练。下载按每语言10M原始token计数，实际训练集约90%，以manifest为准；数据只做精确去重，不能称为已经排除所有基准污染。
+
+三组依次训练，各1000个optimizer steps、累积8次，长度课程一致；这轮是同数据曝光/同训练步数的单seed对照，**不是严格等校准FLOPs**。关闭profile_pipeline的阶段同步，再收集实际时间与tokens。输出runs/stage1-s17/{B0,L3,G2}，每组保留最近两个step检查点与final，底座权重共享缓存。
+
+长文短跑的累积2次约0.48秒/step，线性外推累积8次、全长8K的1000步约32分钟/组，只是预算参考；混合长度、数据分布、GPU负载与检查点I/O会改变它。先从日志前50步确认速度，再决定是否继续。中断时用相同原参数加--resume；脚本会备份日志、对齐至最后完整检查点并恢复，已完成的组不会重复训练。
+
+训练全部完成后：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/stage1.py --action evaluate
+python scripts/stage1.py --action summary
+```
+
+输出outputs/stage1-s17/summary.json，包含逐语言MLM loss与训练日志末条统计。MLM只用于结构适配诊断，不能用它决定最终模型胜负；之后必须进行同预算分类、抽取、检索/重排及长程证据应用验证，再对有潜力的变化做三seed确认。尤其不能因为单seed MLM loss更低就保留G2，或仅因更高就宣称所有用途均失败。

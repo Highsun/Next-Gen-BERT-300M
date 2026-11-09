@@ -19,15 +19,23 @@ parser.add_argument('--model', default='jhu-clsp/mmBERT-base')
 parser.add_argument('--model-revision', default='main')
 parser.add_argument('--dataset-revision', default='main')
 parser.add_argument('--seed', type=int, default=17)
+parser.add_argument('--dev-percent', type=int, default=1)
 args = parser.parse_args()
 if args.tokens_per_language < 10000:
     parser.error('Use at least 10000 tokens per language to get nonempty splits')
+if not 1 <= args.dev_percent <= 50:
+    parser.error('dev-percent must be between 1 and 50')
 output = Path(args.output_dir)
 if output.exists():
     raise FileExistsError('Use a fresh directory, never overwrite a frozen corpus')
-model_sha = HfApi().model_info(args.model, revision=args.model_revision).sha
-dataset_sha = HfApi().dataset_info('wikimedia/wikipedia', revision=args.dataset_revision).sha
-tok = AutoTokenizer.from_pretrained(args.model, revision=model_sha, use_fast=True)
+model_sha = (args.model_revision if len(args.model_revision) == 40 else
+             HfApi().model_info(args.model, revision=args.model_revision).sha)
+dataset_sha = (args.dataset_revision if len(args.dataset_revision) == 40 else
+               HfApi().dataset_info('wikimedia/wikipedia', revision=args.dataset_revision).sha)
+try:
+    tok = AutoTokenizer.from_pretrained(args.model, revision=model_sha, use_fast=True, local_files_only=True)
+except OSError:
+    tok = AutoTokenizer.from_pretrained(args.model, revision=model_sha, use_fast=True)
 output.mkdir(parents=True)
 handles = {name: (output/f'{name}.jsonl').open('w', encoding='utf-8') for name in ('train', 'dev')}
 counts = {lang: {'tokens': 0, 'documents': 0, 'train': 0, 'dev': 0} for lang in ('zh', 'en')}
@@ -55,7 +63,7 @@ try:
             seen.add(digest)
             doc_id = f"wiki-{lang}-{article['id']}"
             split_hash = hashlib.sha256(doc_id.encode()).hexdigest()
-            split = 'dev' if int(split_hash[:8], 16) % 100 == 0 else 'train'
+            split = 'dev' if int(split_hash[:8], 16) % 100 < args.dev_percent else 'train'
             row = {'id': doc_id, 'group_id': doc_id, 'language': lang, 'text': text,
                    'source': article.get('url'), 'source_revision': dataset_sha,
                    'content_sha256': digest,
@@ -71,7 +79,7 @@ if any(counts[lang][split] == 0 for lang in counts for split in ('train', 'dev')
     raise RuntimeError('Empty language/split: increase target and use a fresh directory')
 manifest = {'model_name': args.model, 'model_revision': model_sha,
             'dataset_revision': dataset_sha, 'counts': counts, 'seed': args.seed,
-            'sampling': 'Deterministic source order; interleave languages; exact dedup; doc hash 99/1.',
+            'sampling': f'Deterministic source order; interleave languages; exact dedup; doc hash {100-args.dev_percent}/{args.dev_percent}.',
             'limitations': 'First contiguous <=8190-token article window; no benchmark decontamination or near dedup.',
             'files': {name: hashlib.sha256((output/f'{name}.jsonl').read_bytes()).hexdigest()
                       for name in handles}}

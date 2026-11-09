@@ -1,5 +1,5 @@
 {
-  "checked_at_utc": "2026-11-08T15:00:42.807087+00:00",
+  "checked_at_utc": "2026-11-09T01:24:21.222039+00:00",
   "python_files": [
     "src/nextbert/__init__.py",
     "src/nextbert/attention.py",
@@ -14,6 +14,7 @@
     "scripts/long_check.py",
     "scripts/make_diagnostics.py",
     "scripts/prepare_wikipedia.py",
+    "scripts/stage1.py",
     "scripts/static_check.py",
     "tests/test_cuda_contracts.py"
   ],
